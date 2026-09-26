@@ -16,6 +16,14 @@ class User(Base):
     trainer_profile = relationship("TrainerProfile", back_populates="user", uselist=False)
     mentor_profile = relationship("MentorProfile", back_populates="user", uselist=False)
     institute_admin_profile = relationship("InstituteAdmin", back_populates="user", uselist=False)
+    jobs = relationship("Job", back_populates="recruiter", passive_deletes="all")
+    job_applications = relationship(
+        "JobApplication",
+        back_populates="candidate",
+        passive_deletes="all",
+    )
+    application_events = relationship("ApplicationEvent", back_populates="actor")
+    notifications = relationship("Notification", back_populates="recipient")
 
 class CandidateProfile(Base):
     __tablename__ = "candidate_profiles"

@@ -1,224 +1,135 @@
-import React, { useState } from "react";
-import {
-  Star,
-  MessageSquareText,
-  CheckCircle2,
-} from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, MessageSquareText, Star } from "lucide-react";
+import { createPlacementOutcome, getCourses } from "../../services/api";
 import "./recruiter.css";
-const candidate = {
-  id: 1,
-  name: "Rahul Sharma",
-  role: "Full Stack Developer",
-  company: "TechNova Solutions",
-  status: "Shortlisted",
+
+const initialForm = {
+  roleTitle: "",
+  sector: "",
+  districtId: "",
+  courseId: "",
+  placed: "true",
+  employerRating: "",
+  courseRelevanceScore: "",
+  feedbackNotes: "",
 };
 
 export default function PlacementFeedback() {
-  const [rating, setRating] = useState(0);
-  const [courseRelevance, setCourseRelevance] =
-    useState(0);
-  const [feedback, setFeedback] = useState("");
+  const [form, setForm] = useState(initialForm);
+  const [courses, setCourses] = useState([]);
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-
-    if (!rating) {
-      alert("Please select a candidate rating.");
-      return;
+  const loadCourses = useCallback(async () => {
+    try {
+      setCourses(await getCourses());
+    } catch (loadError) {
+      setError(loadError.message);
     }
+  }, []);
 
-    setSubmitted(true);
+  useEffect(() => {
+    loadCourses();
+  }, [loadCourses]);
+
+  const update = (event) => {
+    setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await createPlacementOutcome({
+        ...form,
+        placed: form.placed === "true",
+      });
+      setSubmitted(true);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="recruiter-page">
       <div className="page-header">
         <div>
-          <span className="page-eyebrow">
-            RECRUITER
-          </span>
-
+          <span className="page-eyebrow">RECRUITER</span>
           <h1>Placement Feedback</h1>
-
-          <p>
-            Share feedback about the candidate after
-            the recruitment process.
-          </p>
+          <p>Record real placement outcomes and employer feedback to improve local training plans.</p>
         </div>
       </div>
 
-      {!submitted ? (
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {submitted ? (
+        <div className="feedback-success">
+          <div className="feedback-success-icon"><CheckCircle2 size={42} /></div>
+          <h2>Outcome recorded</h2>
+          <p>Your placement outcome and feedback have been saved for labour-market analysis.</p>
+          <button className="primary-button" type="button" onClick={() => { setForm(initialForm); setSubmitted(false); }}>
+            Record another outcome
+          </button>
+        </div>
+      ) : (
         <div className="feedback-container">
           <div className="feedback-info">
-            <div className="feedback-info-icon">
-              <MessageSquareText size={22} />
-            </div>
-
+            <div className="feedback-info-icon"><MessageSquareText size={22} /></div>
             <div>
-              <h3>
-                Candidate Placement Feedback
-              </h3>
-
-              <p>
-                Your feedback helps KAUSHAL understand
-                candidate readiness and course relevance.
-              </p>
+              <h3>Employer outcome report</h3>
+              <p>Only submit verified, aggregated learning and placement feedback. Avoid entering candidate-sensitive personal information.</p>
             </div>
           </div>
-
-          <div className="feedback-candidate-card">
-            <div className="feedback-avatar">
-              {candidate.name.charAt(0)}
-            </div>
-
-            <div>
-              <h2>{candidate.name}</h2>
-
-              <p>{candidate.role}</p>
-
-              <span>{candidate.company}</span>
-            </div>
-
-            <div className="feedback-status">
-              {candidate.status}
-            </div>
-          </div>
-
-          <form
-            className="feedback-form"
-            onSubmit={handleSubmit}
-          >
-            <div className="rating-section">
-              <label>
-                Candidate Readiness
-              </label>
-
-              <div className="star-rating">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    type="button"
-                    key={star}
-                    className={
-                      star <= rating
-                        ? "star active"
-                        : "star"
-                    }
-                    onClick={() =>
-                      setRating(star)
-                    }
-                  >
-                    <Star
-                      size={28}
-                      fill={
-                        star <= rating
-                          ? "currentColor"
-                          : "none"
-                      }
-                    />
-                  </button>
-                ))}
+          <form className="feedback-form" onSubmit={handleSubmit}>
+            <div className="form-grid">
+              <div className="form-group">
+                <label htmlFor="feedback-role">Role title</label>
+                <input id="feedback-role" name="roleTitle" value={form.roleTitle} onChange={update} required maxLength={255} />
               </div>
-
-              <span className="rating-label">
-                {rating === 0
-                  ? "Select rating"
-                  : `${rating} out of 5`}
-              </span>
-            </div>
-
-            <div className="rating-section">
-              <label>
-                Course Relevance
-              </label>
-
-              <div className="star-rating">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <button
-                    type="button"
-                    key={star}
-                    className={
-                      star <= courseRelevance
-                        ? "star active"
-                        : "star"
-                    }
-                    onClick={() =>
-                      setCourseRelevance(star)
-                    }
-                  >
-                    <Star
-                      size={28}
-                      fill={
-                        star <= courseRelevance
-                          ? "currentColor"
-                          : "none"
-                      }
-                    />
-                  </button>
-                ))}
+              <div className="form-group">
+                <label htmlFor="feedback-sector">Sector (optional)</label>
+                <input id="feedback-sector" name="sector" value={form.sector} onChange={update} maxLength={150} />
               </div>
-
-              <span className="rating-label">
-                {courseRelevance === 0
-                  ? "Select rating"
-                  : `${courseRelevance} out of 5`}
-              </span>
+              <div className="form-group">
+                <label htmlFor="feedback-district">District</label>
+                <input id="feedback-district" name="districtId" value={form.districtId} onChange={update} required maxLength={100} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="feedback-course">Related course (optional)</label>
+                <select id="feedback-course" name="courseId" value={form.courseId} onChange={update}>
+                  <option value="">Not specified</option>
+                  {courses.map((course) => <option key={course.courseId} value={course.courseId}>{course.courseName}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="feedback-placement-status">Placement outcome</label>
+                <select id="feedback-placement-status" name="placed" value={form.placed} onChange={update}>
+                  <option value="true">Placed</option>
+                  <option value="false">Not placed</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="feedback-rating"><Star size={15} /> Employer readiness rating (optional, 1-5)</label>
+                <input id="feedback-rating" name="employerRating" type="number" min="1" max="5" step="0.1" value={form.employerRating} onChange={update} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="feedback-relevance">Course relevance (optional, 0-100)</label>
+                <input id="feedback-relevance" name="courseRelevanceScore" type="number" min="0" max="100" step="1" value={form.courseRelevanceScore} onChange={update} />
+              </div>
             </div>
-
             <div className="form-group">
-              <label>
-                Recruiter Feedback
-              </label>
-
-              <textarea
-                rows="6"
-                value={feedback}
-                onChange={(e) =>
-                  setFeedback(e.target.value)
-                }
-                placeholder="Share your observations about the candidate's skills, readiness and areas for improvement..."
-              />
+              <label htmlFor="feedback-notes">Feedback and skill observations (optional)</label>
+              <textarea id="feedback-notes" name="feedbackNotes" rows="5" maxLength={5000} value={form.feedbackNotes} onChange={update} placeholder="Describe role-relevant strengths, skills to improve, or course relevance. Do not include names or contact details." />
             </div>
-
             <div className="modal-actions">
-              <button
-                type="submit"
-                className="primary-button"
-              >
-                Submit Feedback
+              <button type="submit" className="primary-button" disabled={busy}>
+                {busy ? "Saving..." : "Submit outcome"}
               </button>
             </div>
           </form>
-        </div>
-      ) : (
-        <div className="feedback-success">
-          <div className="feedback-success-icon">
-            <CheckCircle2 size={42} />
-          </div>
-
-          <h2>Feedback Submitted</h2>
-
-          <p>
-            Your feedback for{" "}
-            <strong>{candidate.name}</strong>{" "}
-            has been recorded successfully.
-          </p>
-
-          <div className="submitted-rating">
-            <span>Candidate Readiness</span>
-
-            <strong>
-              {rating}/5
-            </strong>
-          </div>
-
-          <div className="submitted-rating">
-            <span>Course Relevance</span>
-
-            <strong>
-              {courseRelevance || 0}/5
-            </strong>
-          </div>
         </div>
       )}
     </div>

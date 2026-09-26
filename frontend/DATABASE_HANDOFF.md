@@ -1,555 +1,292 @@
-# Job Posting and Application Database Handoff
+# KAUSHAL SQLAlchemy and API Contract
 
-## Purpose
+This document describes the integrated job-posting and application workflow in
+this repository. The existing FastAPI application uses SQLAlchemy 2-style ORM
+models and `Integer` user IDs. Do not replace these IDs with UUIDs or create a
+second users table.
 
-Build the persistent backend for this workflow:
+## Database target and current data
 
-1. A recruiter publishes an active job.
-2. Candidates can discover and view that job.
-3. A candidate applies once to that job.
-4. The recruiter sees the application and candidate details.
-5. The recruiter changes the application status.
-6. The candidate can see the updated status and is notified when selected.
+- SQLite is the agreed database for development and this project delivery.
+- `DATABASE_URL` in `.env.example` uses `sqlite:///./kaushal.db`. SQLite is
+  built into Python and needs no additional database driver.
+- The checked-in SQLite database was inspected read-only: SQLite reported
+  `integrity_check = ok` and no foreign-key violations.
+- `Base.metadata.create_all()` creates missing tables but does not modify
+  existing columns or migrate data. It is not a replacement for schema
+  migrations. Startup applies an additive migration for the
+  `training_capacity.trainer_capabilities` column when needed. Back up the
+  database before schema/data migration.
+- `kaushal.db` is file-based. Keep it out of source control if it contains
+  real user data; share schema and seed data instead of personal database rows.
 
-The current frontend is a demo that stores jobs and applications in browser
-`localStorage`. That data is limited to one browser and does not synchronize
-between a recruiter's and candidate's devices. The database and API described
-here should replace that demo storage for shared, persistent use.
+## Existing account/profile model
 
-## Assumptions and terminology
+The existing tables remain authoritative:
 
-- Database: MySQL 8.0.16 or newer with InnoDB tables. This version supports
-  enforced `CHECK` constraints.
-- `users` is the common account table. A user's role is `candidate` or
-  `recruiter` for these workflows.
-- A job belongs to one recruiter account.
-- An application belongs to exactly one candidate and one job. Its recruiter
-  is determined by the job owner.
-- Application statuses used by the current UI:
-  - `under_review`
-  - `shortlisted` (display as “Selected by recruiter” to the candidate)
-  - `rejected`
-- Job statuses used by the current UI:
-  - `active`
-  - `closed`
-- Do not store applicant totals as a manually maintained source of truth.
-  Calculate them from applications to avoid count drift.
-- The existing login is a role-preview demo. Production APIs must obtain the
-  authenticated user identity from the server-validated session/token, not
-  trust a `candidateId` or `recruiterId` supplied in the request body.
+| Table | Purpose |
+|---|---|
+| `users` | `user_id` integer PK, email, password hash, full name, role |
+| `candidate_profiles` | candidate readiness, skills JSON in `skill_gap_profile`, location |
+| `recruiter_profiles` | organization name and hiring domains |
 
-## Entity relationship
+Candidate skills are read from `candidate_profiles.skill_gap_profile["skills"]`.
+Candidate registration writes the supplied skills into that JSON field. Phone,
+resume, education, and experience are not currently stored by the existing
+candidate profile model; the recruiter API returns them as `null` until the
+team adds fields and migrations for them.
 
-```text
-users (candidate) 1 ────── * applications * ────── 1 jobs
-users (recruiter) 1 ────── * jobs
-applications 1 ────── * application_events
-users (recipient) 1 ────── * notifications
-```
+Roles in the API/database are lowercase snake case where applicable:
+`candidate`, `recruiter`, `trainer`, `mentor`, `institute_admin`, and
+`policy_officer`. The frontend maps `institute_admin` and `policy_officer` to
+its route keys `instituteAdmin` and `policyOfficer`.
 
-## MySQL schema proposal
+## Job workflow tables
 
-This is an implementation starting point. Use migrations in the backend
-project rather than running ad-hoc SQL in production. Generate UUIDs in the
-backend and store them as `CHAR(36)`; this keeps API IDs straightforward and
-avoids tying UUID creation to one MySQL version. Use UTC for database
-connections and application timestamps.
+Defined in `app/models/jobs.py`; integer PK/FKs match `users.user_id`.
 
-```sql
-CREATE TABLE users (
-    id              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    email           VARCHAR(254) NOT NULL UNIQUE,
-    full_name       VARCHAR(255) NOT NULL,
-    role            VARCHAR(32) NOT NULL,
-    is_active       TINYINT(1) NOT NULL DEFAULT 1,
-    created_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                   ON UPDATE CURRENT_TIMESTAMP(3),
-    CONSTRAINT users_role_check CHECK (role IN ('candidate', 'recruiter'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+### `jobs`
 
-CREATE TABLE candidate_profiles (
-    user_id         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    location        VARCHAR(255),
-    phone           VARCHAR(50),
-    skills          JSON NOT NULL,
-    experience      TEXT,
-    education       TEXT,
-    summary         TEXT,
-    resume_url      TEXT,
-    readiness       SMALLINT,
-    updated_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                   ON UPDATE CURRENT_TIMESTAMP(3),
-    CONSTRAINT candidate_profiles_readiness_check
-        CHECK (readiness IS NULL OR readiness BETWEEN 0 AND 100),
-    CONSTRAINT candidate_profiles_user_fk
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+- `job_id` primary key
+- `recruiter_id` FK to `users.user_id`
+- `title`, `company`, `location`, `job_type`, `experience`, `salary`
+- `skills` JSON array and `description`
+- `status`: `active` or `closed`
+- publication, creation, and update timestamps
+- indexed recruiter, title, location, and status
 
-CREATE TABLE recruiter_profiles (
-    user_id         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    company_name    VARCHAR(255) NOT NULL,
-    updated_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                   ON UPDATE CURRENT_TIMESTAMP(3),
-    CONSTRAINT recruiter_profiles_user_fk
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+`JobPosting` in the existing `job_postings` table is the separate
+labour-market-intelligence feed (`/api/intelligence/jobs`). It is not the
+recruiter's job-board table.
 
-CREATE TABLE jobs (
-    id              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    recruiter_id    CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    title           VARCHAR(255) NOT NULL,
-    company         VARCHAR(255) NOT NULL,
-    location        VARCHAR(255) NOT NULL,
-    job_type        VARCHAR(32) NOT NULL,
-    experience      VARCHAR(255) NOT NULL,
-    salary          VARCHAR(255) NOT NULL,
-    skills          JSON NOT NULL,
-    description     TEXT NOT NULL,
-    status          VARCHAR(16) NOT NULL DEFAULT 'active',
-    published_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    created_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                   ON UPDATE CURRENT_TIMESTAMP(3),
-    INDEX jobs_active_published_idx (status, published_at DESC),
-    INDEX jobs_recruiter_idx (recruiter_id, created_at DESC),
-    CONSTRAINT jobs_type_check
-        CHECK (job_type IN ('Full Time', 'Part Time', 'Internship', 'Contract')),
-    CONSTRAINT jobs_status_check CHECK (status IN ('active', 'closed')),
-    CONSTRAINT jobs_recruiter_fk
-        FOREIGN KEY (recruiter_id) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+### `job_applications`
 
-CREATE TABLE applications (
-    id              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    job_id          CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    candidate_id    CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    status          VARCHAR(24) NOT NULL DEFAULT 'under_review',
-    cover_note      TEXT,
-    applied_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    updated_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-                                   ON UPDATE CURRENT_TIMESTAMP(3),
-    UNIQUE KEY applications_one_per_candidate_job (job_id, candidate_id),
-    INDEX applications_candidate_idx (candidate_id, applied_at DESC),
-    CONSTRAINT applications_status_check
-        CHECK (status IN ('under_review', 'shortlisted', 'rejected')),
-    CONSTRAINT applications_job_fk
-        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE RESTRICT,
-    CONSTRAINT applications_candidate_fk
-        FOREIGN KEY (candidate_id) REFERENCES users(id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+- `application_id` primary key
+- `job_id` FK to `jobs.job_id`
+- `candidate_id` FK to `users.user_id`
+- `status`: `under_review`, `shortlisted`, or `rejected`
+- applied and updated timestamps
+- unique constraint on `(job_id, candidate_id)` prevents duplicate applies
 
-CREATE TABLE application_events (
-    id              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    application_id  CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    actor_user_id   CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
-    old_status      VARCHAR(24) NULL,
-    new_status      VARCHAR(24) NOT NULL,
-    note            TEXT,
-    created_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    INDEX application_events_application_idx (application_id, created_at DESC),
-    CONSTRAINT application_events_old_status_check
-        CHECK (old_status IS NULL OR
-               old_status IN ('under_review', 'shortlisted', 'rejected')),
-    CONSTRAINT application_events_new_status_check
-        CHECK (new_status IN ('under_review', 'shortlisted', 'rejected')),
-    CONSTRAINT application_events_application_fk
-        FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,
-    CONSTRAINT application_events_actor_fk
-        FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+### `application_events`
 
-CREATE TABLE notifications (
-    id              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
-    recipient_id    CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    application_id  CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
-    type            VARCHAR(40) NOT NULL,
-    title           VARCHAR(255) NOT NULL,
-    message         TEXT NOT NULL,
-    is_read         TINYINT(1) NOT NULL DEFAULT 0,
-    created_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-    read_at         DATETIME(3) NULL,
-    INDEX notifications_recipient_unread_idx
-        (recipient_id, is_read, created_at DESC),
-    CONSTRAINT notifications_type_check
-        CHECK (type IN ('new_application', 'application_status_changed')),
-    CONSTRAINT notifications_recipient_fk
-        FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
-    CONSTRAINT notifications_application_fk
-        FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-```
+Stores initial application and later status history: application, actor,
+old/new status, optional note, and timestamp.
 
-The `skills` columns are MySQL `JSON` arrays; the backend should write a JSON
-array such as `["React", "Node.js"]` and validate that each value is a string.
-Supply an empty array (`[]`) when no skills are present rather than relying on
-a database default. Create UUID values in the backend for all primary and
-foreign keys before inserting related rows. `CHECK` constraints are enforced
-starting with MySQL 8.0.16; use this minimum version or add equivalent
-application validation if an older server is unavoidable.
+### `notifications`
 
-### Important data rules
-
-- The authenticated user's role must be checked for every protected endpoint.
-- A candidate may apply only to an active job.
-- The unique `(job_id, candidate_id)` constraint is the final defense against
-  duplicate applications, including simultaneous requests.
-- On application creation, save the application, its initial event, and any
-  recruiter notification in one transaction.
-- On status change, save the new status, status event, and candidate
-  notification in one transaction.
-- Only the recruiter who owns a job may view or update its applications.
-- Only the candidate who owns an application may read it.
-- Only the owning recruiter may change application status.
-- Do not let a status update change the job or candidate associated with an
-  application.
-- Treat resume files as private objects in file/blob storage; store only an
-  access-controlled URL/key in the profile.
+Stores new-application notifications for recruiters and status-change
+notifications for candidates, including read state.
 
 ## API contract
 
-Use JSON over HTTPS. Resource IDs below are UUIDs. Authentication is assumed to
-be a server-validated bearer token or secure session cookie. All list endpoints
-should be paginated in production.
+Base URL defaults to `http://localhost:8000/api`. The Pydantic base schema
+serializes snake_case fields as camelCase. The frontend sends and reads
+camelCase JSON.
 
-### Candidate-facing endpoints
-
-#### List active jobs
+### Authentication
 
 ```http
-GET /api/jobs?search=developer&location=Bangalore&type=Full%20Time&page=1
+POST /api/auth/register
+POST /api/auth/login
+GET  /api/auth/me
 ```
 
-Return active jobs only by default. `search`, `location`, and `type` are
-optional filters.
-
-```json
-{
-  "items": [
-    {
-      "id": "uuid",
-      "title": "Full Stack Developer",
-      "company": "TechNova Solutions",
-      "location": "Bangalore",
-      "type": "Full Time",
-      "experience": "0–2 Years",
-      "salary": "₹6–10 LPA",
-      "skills": ["React", "Node.js", "PostgreSQL"],
-      "description": "Build and maintain web applications.",
-      "postedAt": "2026-09-25T10:00:00Z",
-      "applicantCount": 4
-    }
-  ],
-  "page": 1,
-  "pageSize": 20,
-  "total": 1
-}
-```
-
-#### View one active job
+Registration fields: `email`, `password`, `fullName`, `roleType`, and optional
+`orgName`, `locationPref`, `skills`. Password minimum is eight characters.
+Login and registration return `accessToken`, `tokenType`, `userId`,
+`roleType`, `fullName`, and `email`. Send the token on subsequent requests:
 
 ```http
-GET /api/jobs/{jobId}
+Authorization: Bearer <accessToken>
 ```
 
-Return `404` for a missing job. Do not expose private recruiter or applicant
-data in a public job response.
+`GET /api/auth/me` returns the current account/profile summary. The frontend
+does not send candidate or recruiter IDs to perform protected operations; the
+backend derives identity and role from the verified token.
 
-#### Apply to a job
+### Candidate jobs and applications
 
 ```http
-POST /api/jobs/{jobId}/applications
-Content-Type: application/json
-```
-
-The candidate ID comes from the authenticated user, not the request body.
-
-```json
-{
-  "coverNote": "I am interested in this role."
-}
-```
-
-Return `201 Created` with the created application. Return `409 Conflict` if the
-candidate already applied, or if the job is no longer active.
-
-```json
-{
-  "id": "application-uuid",
-  "jobId": "job-uuid",
-  "candidateId": "candidate-uuid",
-  "status": "under_review",
-  "appliedAt": "2026-09-25T10:10:00Z"
-}
-```
-
-#### View my applications and status
-
-```http
-GET /api/me/applications?page=1
-```
-
-```json
-{
-  "items": [
-    {
-      "id": "application-uuid",
-      "job": {
-        "id": "job-uuid",
-        "title": "Full Stack Developer",
-        "company": "TechNova Solutions"
-      },
-      "status": "shortlisted",
-      "statusLabel": "Selected by recruiter",
-      "appliedAt": "2026-09-25T10:10:00Z",
-      "updatedAt": "2026-09-26T09:30:00Z"
-    }
-  ],
-  "page": 1,
-  "pageSize": 20,
-  "total": 1
-}
-```
-
-The frontend must refresh this resource when the candidate returns to the page.
-For prompt notification while already online, use polling, server-sent events,
-or WebSockets; database persistence alone does not push updates into an open
-browser.
-
-### Recruiter-facing endpoints
-
-#### Create a job
-
-```http
-POST /api/recruiter/jobs
-Content-Type: application/json
-```
-
-The recruiter ID comes from the authenticated user.
-
-```json
-{
-  "title": "Full Stack Developer",
-  "company": "TechNova Solutions",
-  "location": "Bangalore",
-  "type": "Full Time",
-  "experience": "0–2 Years",
-  "salary": "₹6–10 LPA",
-  "skills": ["React", "Node.js", "PostgreSQL"],
-  "description": "Build and maintain web applications."
-}
-```
-
-Return `201 Created` with the persisted job. The new active job should be
-visible from `GET /api/jobs` without additional manual publication steps.
-
-#### List my jobs
-
-```http
-GET /api/recruiter/jobs?page=1
-```
-
-Return only jobs owned by the authenticated recruiter. Include
-`applicantCount`, calculated from `applications`.
-
-#### List applications for a recruiter-owned job
-
-```http
-GET /api/recruiter/jobs/{jobId}/applications?status=under_review&page=1
-```
-
-Return `404` or `403` if the job does not belong to the authenticated
-recruiter. Candidate contact/profile data is returned only to the owning
-recruiter.
-
-```json
-{
-  "items": [
-    {
-      "id": "application-uuid",
-      "jobId": "job-uuid",
-      "candidate": {
-        "id": "candidate-uuid",
-        "fullName": "Aarav Sharma",
-        "email": "candidate@kaushal.demo",
-        "location": "Bangalore",
-        "skills": ["React", "JavaScript", "Node.js"],
-        "phone": null,
-        "experience": null,
-        "education": null,
-        "summary": null,
-        "resumeUrl": null,
-        "readiness": 78
-      },
-      "status": "under_review",
-      "appliedAt": "2026-09-25T10:10:00Z"
-    }
-  ],
-  "page": 1,
-  "pageSize": 20,
-  "total": 1
-}
-```
-
-#### Change application status
-
-```http
-PATCH /api/recruiter/applications/{applicationId}/status
-Content-Type: application/json
-```
-
-```json
-{
-  "status": "shortlisted",
-  "note": "Selected for the next round."
-}
-```
-
-Persist the status, add an `application_events` row, and create an
-`application_status_changed` notification for that application's candidate in
-one transaction. Return the updated application. The candidate's next read of
-`GET /api/me/applications` must return the new status.
-
-Valid status transitions for the current UI:
-
-```text
-under_review -> shortlisted
-under_review -> rejected
-shortlisted  -> rejected
-rejected     -> shortlisted (allow only if recruiter is intentionally
-                              reconsidering; alternatively disallow by policy)
-```
-
-If the team chooses to disallow reconsideration, enforce it server-side and
-return `409 Conflict` for the invalid transition.
-
-### Notifications endpoints (recommended)
-
-```http
-GET   /api/me/notifications?unreadOnly=true&page=1
+GET  /api/jobs?search=developer&location=Bangalore&type=Full%20Time
+GET  /api/jobs/{jobId}
+POST /api/jobs/{jobId}/apply
+GET  /api/me/applications
+GET  /api/me/notifications?unreadOnly=true
 PATCH /api/me/notifications/{notificationId}/read
 ```
 
-The candidate notification on shortlist should have a clear message, for
-example: “You were selected for Full Stack Developer at TechNova Solutions.”
-The existing candidate application list is still the durable source of status;
-the notification is the prompt telling them to check it.
+`GET /api/jobs` returns active jobs only. Applying accepts an optional JSON
+body such as `{"coverNote":"Interested in this role."}`. Candidate identity is
+from the token. Duplicate applications return HTTP `409`; a missing or
+inactive job returns `404`.
 
-## Transaction outlines
-
-### Applying to a job
-
-1. Resolve candidate from authenticated session and confirm role is candidate.
-2. Begin an InnoDB transaction.
-3. Select the job with `SELECT ... FOR UPDATE` and verify it is active. This
-   serializes applying against a concurrent job-close operation.
-4. Insert application with initial `under_review` status.
-5. Insert initial `application_events` row (`old_status = NULL`).
-6. Optionally insert a `new_application` notification for the job's recruiter.
-7. Commit and return the application.
-8. Translate unique-constraint violation to HTTP `409`.
-
-Applicant count is `COUNT(*)` over applications for the job. If caching the
-count later for performance, update it transactionally and periodically
-reconcile it against the applications table.
-
-### Shortlisting/rejecting
-
-1. Resolve recruiter from authenticated session and confirm role is recruiter.
-2. Begin an InnoDB transaction.
-3. Lock/read the application with `SELECT ... FOR UPDATE` and join its job;
-   verify job owner is this recruiter.
-4. Validate requested status and transition.
-5. Update application status and `updated_at`.
-6. Insert status-change event with actor, prior status, new status, and note.
-7. Insert `application_status_changed` notification for the candidate.
-8. Commit and return the updated application.
-
-## UI-to-backend field mapping
-
-| Existing UI concept | Database/API field |
-|---|---|
-| `job.id` | `jobs.id` |
-| `job.recruiterId` | `jobs.recruiter_id` (derived from auth when creating) |
-| `job.title`, `company`, `location` | matching `jobs` columns |
-| `job.type` | `jobs.job_type` |
-| `job.skills` | `jobs.skills` |
-| `job.status === "Active"` | `jobs.status = 'active'` |
-| `application.id` | `applications.id` |
-| `application.jobId` | `applications.job_id` |
-| `application.candidateId` | `applications.candidate_id` (derived from auth) |
-| `application.recruiterId` | derive through `applications.job_id -> jobs.recruiter_id` |
-| `Under Review` | `under_review` |
-| `Shortlisted` | `shortlisted`, candidate-facing label “Selected by recruiter” |
-| `Rejected` | `rejected` |
-| Candidate skills/contact/CV | `candidate_profiles` joined with `users` |
-
-Keep API status casing consistent (recommended lowercase machine values);
-translate machine values to UI labels in the frontend.
-
-## Error behavior
-
-Use predictable JSON errors, for example:
+Example job item:
 
 ```json
 {
-  "error": {
-    "code": "already_applied",
-    "message": "You have already applied for this job."
-  }
+  "jobId": 18,
+  "recruiterId": 4,
+  "title": "Full Stack Developer",
+  "company": "TechNova Solutions",
+  "location": "Bangalore",
+  "jobType": "Full Time",
+  "experience": "0-2 Years",
+  "salary": "₹6-10 LPA",
+  "skills": ["React", "Node.js"],
+  "description": "Build web applications.",
+  "status": "active",
+  "publishedAt": "2026-09-26T10:00:00",
+  "applicantCount": 2
 }
 ```
 
-Recommended HTTP status codes:
+Example candidate application item:
 
-- `400 Bad Request`: malformed body or invalid field values.
-- `401 Unauthorized`: missing or invalid authentication.
-- `403 Forbidden`: authenticated user has the wrong role or does not own the
-  requested resource (using `404` instead is also acceptable to avoid
-  disclosing resource existence; apply consistently).
-- `404 Not Found`: job/application does not exist.
-- `409 Conflict`: duplicate application, closed job, or invalid status
-  transition.
-- `500 Internal Server Error`: unexpected server/database failure; log details
-  server-side, but do not return secrets or SQL error text to the client.
+```json
+{
+  "applicationId": 35,
+  "job": {
+    "jobId": 18,
+    "title": "Full Stack Developer",
+    "company": "TechNova Solutions"
+  },
+  "status": "shortlisted",
+  "appliedAt": "2026-09-26T10:15:00",
+  "updatedAt": "2026-09-26T11:00:00"
+}
+```
 
-## Acceptance checks
+The frontend displays `shortlisted` as **Selected by recruiter**. Candidate
+applications refresh periodically while the page is open, and also refresh
+when it is reopened.
 
-1. A recruiter creates a job; it survives reload and appears in the candidate
-   job list for a separate account/browser.
-2. A closed job is not returned by the default candidate job list and cannot
-   receive a new application.
-3. A candidate applies; the application appears under the correct recruiter
-   and only that recruiter.
-4. Submitting the same application twice creates one row and returns a
-   duplicate/conflict response.
-5. The recruiter can see candidate name, email, skills, and profile fields
-   associated with the application.
-6. A recruiter cannot read or change applications for another recruiter's
-   job.
-7. A candidate cannot read another candidate's applications or submit as a
-   different candidate by changing a request field.
-8. Recruiter shortlisting changes the stored application status and creates a
-   candidate notification atomically.
-9. The candidate sees “Selected by recruiter” after reloading/refetching their
-   application list.
-10. Rejecting an applicant is also reflected on the candidate's application
-    list.
-11. Recruiter applicant totals equal the number of applications, including
-    concurrent submissions.
-12. Deleting/deactivating a user or job follows the FK/retention policy and
-    does not silently orphan application history.
+### Recruiter job management and applicants
 
-## Integration notes
+```http
+POST  /api/recruiter/jobs
+GET   /api/recruiter/jobs
+GET   /api/recruiter/jobs/{jobId}/applications
+GET   /api/recruiter/applications
+PATCH /api/recruiter/applications/{applicationId}/status
+```
 
-- The frontend currently has local-demo functions in `src/services/api.js`.
-  Replace or wrap these with HTTP calls when the backend is ready; do not use
-  `localStorage` as the cross-user database.
-- Keep IDs consistent across login, job creation, applications, and status
-  updates. The current demo uses role-specific user IDs; production IDs must
-  come from persisted accounts.
-- Keep application status labels and API machine values mapped in one place.
-- Do not store passwords in these profile tables. Authentication/password
-  handling belongs to the identity/authentication implementation.
-- Consider adding rate limits and audit logging for application submission and
-  recruiter status changes.
+Job create JSON fields: `title`, `company`, `location`, `jobType` (also accepts
+`type`), `experience`, `salary`, `skills`, and `description`. Recruiter ID is
+derived from the token.
+
+The recruiter applicants response contains the application, job title/company,
+candidate ID/name/email, location, skills, readiness, status, and timestamps.
+Only the recruiter owning the job can access those applications. A job owned by
+another recruiter returns `404`.
+
+Status update JSON:
+
+```json
+{"status":"shortlisted","note":"Selected for the next round."}
+```
+
+Valid statuses are `under_review`, `shortlisted`, and `rejected`. A changed
+status, its event-history row, and a candidate notification are committed in
+the same transaction. The recruiter applicants page periodically refreshes so
+new submissions appear without a manual reload.
+
+## Labour-market intelligence and planning data
+
+These SQLAlchemy models use the same SQLite database and the existing integer
+`users.user_id` keys. Do not store candidate or recruiter profile IDs in a
+separate identity namespace.
+
+| Table | Purpose and important fields |
+|---|---|
+| `market_signals` | Evidence source, reference, role, sector, location, skill, requested proficiency, weighted demand value, contributor, and observation time. A recruiter job creates one `job_posting` signal per listed skill. |
+| `employer_validations` | Employer's status (`endorsed`, `needs_revision`, `rejected`) and optional comments for a signal. One employer may validate a signal once. |
+| `course_offerings` | Unique course code, qualification, sector, target role, curriculum skills and proficiency map, required equipment/trainer capabilities, placement rate, enrolment, status, and recommended update. |
+| `training_capacity` | District/course seats, trainer count and capabilities, equipment available, and equipment/infrastructure readiness. A district/course pair is unique when a course is specified. |
+| `placement_outcomes` | Optional candidate/course references, role, sector, district, placed flag, candidate/employer ratings, course relevance, feedback, and report time. |
+
+`market_signals.demand_value` is a configurable weight for an evidence
+observation, not a claim that the value equals vacancies, people, or market
+share. Signal summaries aggregate this weight and report the separate signal
+count. Recruiter job board rows in `jobs` remain separate from the legacy
+`job_postings` market-intelligence feed.
+
+The dashboard and demand API summarize evidence by role, skill, location, and
+proficiency. Course analysis prefers signals matching the target role and
+sector, then uses sector-wide evidence, then the overall evidence base when
+more specific observations do not exist. It reports missing top-demand skills
+and proficiency mismatches as review prompts. It may set a course to
+`under_review`, but does not infer `obsolete` or `oversupplied` from weak raw
+signals; a planner must assign those statuses based on validated evidence.
+District planning compares demanded skills with district course coverage and
+compares required equipment/trainer capabilities with reported availability.
+An unreported resource is a data gap, not proof that the district lacks it.
+
+### Intelligence and planning endpoints
+
+All read endpoints below require a bearer token. Write endpoints enforce role
+permissions in the API; do not rely on hiding frontend controls for security.
+
+```http
+GET   /api/intelligence/overview
+GET   /api/intelligence/demand?location=...&sector=...&roleTitle=...
+GET   /api/intelligence/signals?sourceType=...&location=...&roleTitle=...&skill=...
+POST  /api/intelligence/signals
+POST  /api/intelligence/signals/{signalId}/validation
+GET   /api/intelligence/courses?sector=...&courseStatus=...
+POST  /api/intelligence/courses
+PATCH /api/intelligence/courses/{courseId}
+GET   /api/intelligence/courses/{courseId}/analysis
+GET   /api/intelligence/capacity?districtId=...
+POST  /api/intelligence/capacity
+PATCH /api/intelligence/capacity/{capacityId}
+POST  /api/intelligence/placements
+GET   /api/intelligence/district-plans/{districtId}
+GET   /api/intelligence/candidate-guidance
+```
+
+Policy officers and institute administrators may manage evidence, courses,
+capacity, and district plans. Recruiters may submit job/employer evidence,
+validate market signals, and report placements. Candidates may submit their
+own placement outcome and retrieve their own career guidance. Trainers may
+submit permitted labour-market evidence. The exact role guards are enforced
+server-side.
+
+Use camelCase JSON and query parameter names in frontend/API integrations;
+FastAPI maps them explicitly to the SQLAlchemy/Python snake_case fields. Signal
+proficiency values are `beginner`, `intermediate`, `advanced`, `expert`, or
+`unspecified`. Course status values are `active`, `under_review`, `obsolete`,
+or `oversupplied`.
+
+## Integrity and access rules
+
+- Every protected recruiter/candidate endpoint checks role from the signed
+  token.
+- Candidates may apply only to active jobs and only as themselves.
+- A unique database constraint is the final duplicate-application guard,
+  including concurrent requests.
+- Recruiters may list/change applications only for jobs they own.
+- Candidates may list only their own applications and notifications.
+- Job application count is computed from `job_applications`; it is not stored
+  as an independently editable count.
+- Deleting jobs/users with applications is restricted by foreign keys so
+  history is not silently orphaned.
+- Job/application/event/notification status values have database check
+  constraints and request validation.
+- Application plus initial history/recruiter notification are persisted
+  together. Status plus event/candidate notification are persisted together.
+
+## Local run and integration checks
+
+1. Copy root `.env.example` to `.env`; choose a private `SECRET_KEY`.
+3. Install backend requirements and run `py -m uvicorn app.main:app --reload`.
+4. Run `npm install` and `npm run dev` in `frontend/`. Override
+   `VITE_API_URL` only if the API uses a different URL.
+5. Register a recruiter and candidate, create a job, apply, shortlist, and
+   verify the candidate sees **Selected by recruiter**.
+6. Verify a candidate cannot apply twice, another recruiter cannot inspect
+   applications, and a closed/missing job cannot receive applications.
+
+The current registration UI supports accounts for Candidate, Recruiter,
+Trainer, Institute Admin, and Policy Officer. Mentor registration is accepted
+by the backend API but is not offered by the frontend registration form.

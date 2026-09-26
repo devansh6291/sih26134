@@ -4,11 +4,14 @@ from typing import List
 class Settings(BaseSettings):
     PROJECT_NAME: str = "KAUSHAL Intelligence & Certification Platform"
     API_V1_STR: str = "/api"
-    SECRET_KEY: str = "supersecretjwtkey_change_in_production"
+    SECRET_KEY: str = "development-only-change-before-deployment"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 Hours
     DATABASE_URL: str = "sqlite:///./kaushal.db"
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"
+    CORS_ORIGINS: str = (
+        "http://localhost:3000,http://localhost:5173,"
+        "http://127.0.0.1:3000,http://127.0.0.1:5173"
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:

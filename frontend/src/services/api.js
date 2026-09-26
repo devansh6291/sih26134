@@ -1,9 +1,13 @@
-
 import axios from "axios";
 
+const defaultApiHost =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? window.location.hostname
+    : "localhost";
+
 const api = axios.create({
-  baseURL:
-    import.meta.env.VITE_API_URL || "http://localhost:8000/api",
+  baseURL: import.meta.env.VITE_API_URL || `http://${defaultApiHost}:8000/api`,
   headers: {
     "Content-Type": "application/json",
   },
@@ -19,237 +23,372 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-/* =========================================================
-   LOCAL DEMO DATA
-   Later these functions can be replaced with FastAPI calls.
-========================================================= */
-
-const JOBS_KEY = "kaushalJobs";
-const APPLICATIONS_KEY = "kaushalApplications";
-
-const defaultJobs = [
-  {
-    id: 1,
-    title: "Full Stack Developer",
-    company: "TechNova Solutions",
-    location: "Bangalore",
-    type: "Full Time",
-    experience: "0–2 Years",
-    salary: "₹6–10 LPA",
-    skills: ["React", "Node.js", "PostgreSQL"],
-    description:
-      "Build and maintain scalable web applications using modern frontend and backend technologies.",
-    posted: "Today",
-    applicants: 0,
-    status: "Active",
-    recruiterId: "demo-recruiter",
-  },
-];
-
-function readLocalData(key, fallback = []) {
-  try {
-    const data = localStorage.getItem(key);
-
-    if (!data) {
-      return fallback;
-    }
-
-    return JSON.parse(data);
-  } catch (error) {
-    console.error(`Error reading ${key}:`, error);
-    return fallback;
-  }
+function getErrorMessage(error) {
+  const message =
+    error.response?.data?.detail ||
+    error.response?.data?.message ||
+    error.message;
+  return typeof message === "string"
+    ? message
+    : message
+      ? JSON.stringify(message)
+      : "The request could not be completed.";
 }
 
-function writeLocalData(key, data) {
-  localStorage.setItem(key, JSON.stringify(data));
+function withApiError(promise) {
+  return promise.catch((error) => {
+    throw new Error(getErrorMessage(error));
+  });
 }
 
-/* =========================================================
-   JOBS
-========================================================= */
-
-export function getJobs() {
-  const jobs = readLocalData(JOBS_KEY, null);
-
-  if (!jobs) {
-    writeLocalData(JOBS_KEY, defaultJobs);
-    return defaultJobs;
-  }
-
-  return jobs;
+function toUiStatus(status) {
+  const labels = {
+    active: "Active",
+    closed: "Closed",
+    under_review: "Under Review",
+    shortlisted: "Shortlisted",
+    rejected: "Rejected",
+  };
+  return labels[status] || status;
 }
 
-export function createJob(job) {
-  const jobs = getJobs();
+function toApiStatus(status) {
+  const values = {
+    "Under Review": "under_review",
+    Shortlisted: "shortlisted",
+    Rejected: "rejected",
+  };
+  return values[status] || status;
+}
 
-  const newJob = {
-    id: Date.now(),
+function mapJob(job) {
+  return {
+    id: job.jobId,
+    recruiterId: job.recruiterId,
     title: job.title,
     company: job.company,
     location: job.location,
-    type: job.type,
+    type: job.jobType,
     experience: job.experience,
     salary: job.salary,
     skills: job.skills || [],
-    description: job.description || "No description provided.",
-    posted: "Just now",
-    applicants: 0,
-    status: "Active",
-    recruiterId: job.recruiterId,
+    description: job.description || "",
+    status: toUiStatus(job.status),
+    posted: job.publishedAt
+      ? new Date(job.publishedAt).toLocaleDateString()
+      : "",
+    applicants: job.applicantCount || 0,
   };
-
-  const updatedJobs = [...jobs, newJob];
-
-  writeLocalData(JOBS_KEY, updatedJobs);
-
-  return newJob;
 }
 
-export function getRecruiterJobs(recruiterId) {
-  return getJobs().filter(
-    (job) =>
-      job.recruiterId === recruiterId ||
-      (recruiterId === "recruiter-demo" &&
-        job.recruiterId === "demo-recruiter")
-  );
-}
-
-/* =========================================================
-   APPLICATIONS
-========================================================= */
-
-export function getApplications() {
-  return readLocalData(APPLICATIONS_KEY, []);
-}
-
-export function applyForJob(application) {
-  const applications = getApplications();
-
-  const alreadyApplied = applications.some(
-    (item) =>
-      Number(item.jobId) === Number(application.jobId) &&
-      item.candidateId === application.candidateId
-  );
-
-  if (alreadyApplied) {
-    return {
-      success: false,
-      message: "You have already applied for this job.",
-    };
-  }
-
-  const newApplication = {
-    id: Date.now(),
-
-    jobId: application.jobId,
-    recruiterId: application.recruiterId,
-
-    candidateId: application.candidateId,
-    candidateName: application.candidateName,
-    candidateEmail: application.candidateEmail,
-
-    candidateRole: application.candidateRole,
-
-    skills: application.skills || [],
-
-    location: application.location || "",
-    phone: application.phone || "",
-    experience: application.experience || "",
-    education: application.education || "",
-    resume: application.resume || "",
-    summary: application.summary || "",
-
-    readiness: application.readiness || 0,
-
-    status: "Under Review",
-
-    appliedAt: new Date().toISOString(),
-  };
-
-  const updatedApplications = [
-    ...applications,
-    newApplication,
-  ];
-
-  writeLocalData(
-    APPLICATIONS_KEY,
-    updatedApplications
-  );
-
-  /* Update applicant count on the job */
-
-  const jobs = getJobs();
-
-  const updatedJobs = jobs.map((job) => {
-    if (Number(job.id) !== Number(application.jobId)) {
-      return job;
-    }
-
-    return {
-      ...job,
-      applicants: (job.applicants || 0) + 1,
-    };
-  });
-
-  writeLocalData(JOBS_KEY, updatedJobs);
+function mapApplication(application) {
+  const candidate = application.candidate || {};
+  const job = application.job || {};
 
   return {
-    success: true,
-    application: newApplication,
+    id: application.applicationId,
+    jobId: application.jobId ?? job.jobId,
+    recruiterId: application.recruiterId,
+    candidateId: candidate.userId,
+    candidateName: candidate.fullName,
+    candidateEmail: candidate.email,
+    candidateRole: application.jobTitle || job.title || "",
+    company: application.company || job.company || "",
+    skills: candidate.skills || [],
+    location: candidate.location || "",
+    phone: candidate.phone || "",
+    experience: candidate.experience || "",
+    education: candidate.education || "",
+    resume: candidate.resume || "",
+    summary: candidate.summary || "",
+    readiness: candidate.readiness || 0,
+    status: toUiStatus(application.status),
+    appliedAt: application.appliedAt,
   };
 }
 
-/* =========================================================
-   RECRUITER APPLICATIONS
-========================================================= */
-
-export function getRecruiterApplications(recruiterId) {
-  const applications = getApplications();
-
-  return applications.filter(
-    (application) =>
-      application.recruiterId === recruiterId ||
-      (recruiterId === "recruiter-demo" &&
-        application.recruiterId === "demo-recruiter")
+export async function loginWithPassword(email, password) {
+  return withApiError(api.post("/auth/login", { email, password })).then(
+    ({ data }) => data
   );
 }
 
-export function getCandidateApplications(candidateId) {
-  return getApplications().filter(
-    (application) => application.candidateId === candidateId
+export async function registerAccount(account) {
+  return withApiError(
+    api.post("/auth/register", {
+      email: account.email,
+      password: account.password,
+      fullName: account.fullName,
+      roleType: account.roleType,
+      orgName: account.orgName || null,
+      locationPref: account.locationPref || null,
+      skills: account.skills || [],
+    })
+  ).then(({ data }) => data);
+}
+
+export async function getCurrentUser() {
+  return withApiError(api.get("/auth/me")).then(({ data }) => data);
+}
+
+export function getJobs(filters = {}) {
+  const params = {};
+  if (filters.search) params.search = filters.search;
+  if (filters.location && filters.location !== "All") {
+    params.location = filters.location;
+  }
+  if (filters.type && filters.type !== "All") params.type = filters.type;
+
+  return withApiError(api.get("/jobs", { params })).then(({ data }) =>
+    data.map(mapJob)
   );
 }
 
-/* =========================================================
-   UPDATE APPLICATION STATUS
-========================================================= */
-
-export function updateApplicationStatus(
-  applicationId,
-  status
-) {
-  const applications = getApplications();
-
-  const updatedApplications = applications.map(
-    (application) =>
-      Number(application.id) === Number(applicationId)
-        ? {
-            ...application,
-            status,
-          }
-        : application
+export function getRecruiterJobs() {
+  return withApiError(api.get("/recruiter/jobs")).then(({ data }) =>
+    data.map(mapJob)
   );
+}
 
-  writeLocalData(
-    APPLICATIONS_KEY,
-    updatedApplications
-  );
+export function createJob(job) {
+  return withApiError(
+    api.post("/recruiter/jobs", {
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      jobType: job.type,
+      experience: job.experience,
+      salary: job.salary,
+      skills: job.skills || [],
+      description: job.description || "",
+    })
+  ).then(({ data }) => mapJob(data));
+}
 
-  return updatedApplications.find(
-    (application) =>
-      Number(application.id) === Number(applicationId)
+export function applyForJob(jobId, coverNote = "") {
+  return withApiError(
+    api.post(`/jobs/${jobId}/apply`, { coverNote })
+  ).then(({ data }) => mapApplication(data));
+}
+
+export function getCandidateApplications() {
+  return withApiError(api.get("/me/applications")).then(({ data }) =>
+    data.map(mapApplication)
   );
+}
+
+export function getRecruiterApplications() {
+  return withApiError(api.get("/recruiter/applications")).then(({ data }) =>
+    data.map(mapApplication)
+  );
+}
+
+export function updateApplicationStatus(applicationId, status) {
+  return withApiError(
+    api.patch(`/recruiter/applications/${applicationId}/status`, {
+      status: toApiStatus(status),
+    })
+  ).then(({ data }) => mapApplication(data));
+}
+
+export function getNotifications(unreadOnly = false) {
+  return withApiError(
+    api.get("/me/notifications", {
+      params: { unreadOnly },
+    })
+  ).then(({ data }) => data);
+}
+
+export function markNotificationRead(notificationId) {
+  return withApiError(
+    api.patch(`/me/notifications/${notificationId}/read`)
+  ).then(({ data }) => data);
+}
+
+export function getIntelligenceOverview() {
+  return withApiError(api.get("/intelligence/overview")).then(
+    ({ data }) => data
+  );
+}
+
+export function getDemandBreakdown(filters = {}) {
+  return withApiError(
+    api.get("/intelligence/demand", {
+      params: {
+        location: filters.location,
+        sector: filters.sector,
+        roleTitle: filters.roleTitle,
+      },
+    })
+  ).then(({ data }) => data);
+}
+
+export function getMarketSignals(filters = {}) {
+  return withApiError(
+    api.get("/intelligence/signals", {
+      params: {
+        sourceType: filters.sourceType,
+        location: filters.location,
+        roleTitle: filters.roleTitle,
+        skill: filters.skill,
+        limit: filters.limit || 100,
+      },
+    })
+  ).then(({ data }) => data);
+}
+
+export function createMarketSignal(signal) {
+  return withApiError(
+    api.post("/intelligence/signals", {
+      sourceType: signal.sourceType,
+      sourceReference: signal.sourceReference || null,
+      roleTitle: signal.roleTitle,
+      sector: signal.sector || null,
+      location: signal.location,
+      skillName: signal.skillName,
+      proficiencyLevel: signal.proficiencyLevel || "unspecified",
+      demandValue: Number(signal.demandValue || 1),
+      evidenceSummary: signal.evidenceSummary || null,
+    })
+  ).then(({ data }) => data);
+}
+
+export function validateMarketSignal(signalId, validation) {
+  return withApiError(
+    api.post(`/intelligence/signals/${signalId}/validation`, {
+      validationStatus: validation.status,
+      comments: validation.comments || null,
+    })
+  ).then(({ data }) => data);
+}
+
+export function getCourses(filters = {}) {
+  return withApiError(
+    api.get("/intelligence/courses", {
+      params: {
+        sector: filters.sector,
+        courseStatus: filters.courseStatus,
+      },
+    })
+  ).then(({ data }) => data);
+}
+
+export function createCourse(course) {
+  return withApiError(
+    api.post("/intelligence/courses", {
+      courseCode: course.courseCode,
+      courseName: course.courseName,
+      qualification: course.qualification || null,
+      sector: course.sector,
+      targetRole: course.targetRole,
+      skills: course.skills || [],
+      proficiencyLevels: course.proficiencyLevels || {},
+      equipmentRequired: course.equipmentRequired || [],
+      trainerCapabilities: course.trainerCapabilities || [],
+      curriculumVersion: course.curriculumVersion || null,
+      placementRate: course.placementRate ?? null,
+      enrollmentCount: Number(course.enrollmentCount || 0),
+      courseStatus: course.courseStatus || "active",
+    })
+  ).then(({ data }) => data);
+}
+
+export function updateCourse(courseId, course) {
+  return withApiError(
+    api.patch(`/intelligence/courses/${courseId}`, {
+      courseCode: course.courseCode,
+      courseName: course.courseName,
+      qualification: course.qualification || null,
+      sector: course.sector,
+      targetRole: course.targetRole,
+      skills: course.skills || [],
+      proficiencyLevels: course.proficiencyLevels || {},
+      equipmentRequired: course.equipmentRequired || [],
+      trainerCapabilities: course.trainerCapabilities || [],
+      curriculumVersion: course.curriculumVersion || null,
+      placementRate: course.placementRate ?? null,
+      enrollmentCount: Number(course.enrollmentCount || 0),
+      courseStatus: course.courseStatus || "active",
+    })
+  ).then(({ data }) => data);
+}
+
+export function analyzeCourse(courseId) {
+  return withApiError(
+    api.get(`/intelligence/courses/${courseId}/analysis`)
+  ).then(({ data }) => data);
+}
+
+export function getTrainingCapacity(districtId) {
+  return withApiError(
+    api.get("/intelligence/capacity", {
+      params: districtId ? { districtId } : {},
+    })
+  ).then(({ data }) => data);
+}
+
+export function createTrainingCapacity(capacity) {
+  return withApiError(
+    api.post("/intelligence/capacity", {
+      districtId: capacity.districtId,
+      courseId: capacity.courseId ? Number(capacity.courseId) : null,
+      seats: Number(capacity.seats || 0),
+      trainerCount: Number(capacity.trainerCount || 0),
+      trainerCapabilities: capacity.trainerCapabilities || [],
+      equipmentAvailable: capacity.equipmentAvailable || [],
+      equipmentReadiness: Number(capacity.equipmentReadiness || 0),
+      infrastructureReadiness: Number(capacity.infrastructureReadiness || 0),
+    })
+  ).then(({ data }) => data);
+}
+
+export function updateTrainingCapacity(capacityId, capacity) {
+  return withApiError(
+    api.patch(`/intelligence/capacity/${capacityId}`, {
+      districtId: capacity.districtId,
+      courseId: capacity.courseId ? Number(capacity.courseId) : null,
+      seats: Number(capacity.seats || 0),
+      trainerCount: Number(capacity.trainerCount || 0),
+      trainerCapabilities: capacity.trainerCapabilities || [],
+      equipmentAvailable: capacity.equipmentAvailable || [],
+      equipmentReadiness: Number(capacity.equipmentReadiness || 0),
+      infrastructureReadiness: Number(capacity.infrastructureReadiness || 0),
+    })
+  ).then(({ data }) => data);
+}
+
+export function getDistrictPlan(districtId) {
+  return withApiError(
+    api.get(`/intelligence/district-plans/${encodeURIComponent(districtId)}`)
+  ).then(({ data }) => data);
+}
+
+export function getCandidateGuidance() {
+  return withApiError(api.get("/intelligence/candidate-guidance")).then(
+    ({ data }) => data
+  );
+}
+
+export function createPlacementOutcome(outcome) {
+  return withApiError(
+    api.post("/intelligence/placements", {
+      courseId: outcome.courseId ? Number(outcome.courseId) : null,
+      roleTitle: outcome.roleTitle,
+      sector: outcome.sector || null,
+      districtId: outcome.districtId,
+      placed: outcome.placed !== false,
+      candidateRating: outcome.candidateRating
+        ? Number(outcome.candidateRating)
+        : null,
+      employerRating: outcome.employerRating
+        ? Number(outcome.employerRating)
+        : null,
+      courseRelevanceScore: outcome.courseRelevanceScore
+        ? Number(outcome.courseRelevanceScore)
+        : null,
+      feedbackNotes: outcome.feedbackNotes || null,
+    })
+  ).then(({ data }) => data);
 }
 
 export default api;

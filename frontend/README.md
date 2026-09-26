@@ -19,9 +19,11 @@ npm run dev
 
 Open the Vite URL shown in the terminal.
 
-## Demo RBAC
+## Authentication
 
-The login screen contains a role selector so the frontend can demonstrate different role-based dashboards before the FastAPI backend is connected.
+The login screen registers and authenticates accounts through the FastAPI
+backend. Supported account roles are Candidate, Recruiter, Trainer,
+Institute Admin, and Policy Officer.
 
 ## Backend
 
@@ -31,7 +33,8 @@ Set the FastAPI base URL in `.env`:
 VITE_API_URL=http://localhost:8000/api
 ```
 
-Frontend RBAC controls navigation and page access. Production authorization must also be enforced by the backend.
+Frontend RBAC controls navigation and page access. The backend validates bearer
+tokens and enforces access to recruiter jobs and applications.
 
 ## Naming
 

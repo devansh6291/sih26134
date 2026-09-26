@@ -2,35 +2,81 @@ import React from "react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, ShieldCheck, TrendingUp, Users, BrainCircuit } from "lucide-react";
+import {
+  ArrowRight,
+  ShieldCheck,
+  TrendingUp,
+  Users,
+  BrainCircuit,
+} from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { ROLE_HOME, ROLE_LABELS } from "../../config/roles";
+import {
+  getCurrentUser,
+  loginWithPassword,
+  registerAccount,
+} from "../../services/api";
 
-const roles = Object.keys(ROLE_LABELS);
+const roleValues = {
+  candidate: "candidate",
+  recruiter: "recruiter",
+  trainer: "trainer",
+  instituteAdmin: "institute_admin",
+  policyOfficer: "policy_officer",
+};
 
 export default function Login() {
-  const [role, setRole] = useState("policyOfficer");
+  const [mode, setMode] = useState("login");
+  const [role, setRole] = useState("candidate");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [company, setCompany] = useState("");
+  const [location, setLocation] = useState("");
+  const [skills, setSkills] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const names = {
-      candidate: "Aarav Sharma",
-      recruiter: "Priya Mehta",
-      trainer: "Rohan Verma",
-      instituteAdmin: "Neha Singh",
-      policyOfficer: "Ananya Kapoor"
-    };
+    setError("");
+    setIsSubmitting(true);
 
-    login({
-      userId: `${role}-demo`,
-      fullName: names[role],
-      email: `${role}@kaushal.demo`,
-      roleType: role
-    });
+    try {
+      const tokenResponse = mode === "register"
+        ? await registerAccount({
+            email,
+            password,
+            fullName,
+            roleType: roleValues[role],
+            orgName: company,
+            locationPref: location,
+            skills: skills
+              .split(",")
+              .map((skill) => skill.trim())
+              .filter(Boolean),
+          })
+        : await loginWithPassword(email, password);
 
-    navigate(ROLE_HOME[role]);
+      localStorage.setItem("kaushalToken", tokenResponse.accessToken);
+      const user = await getCurrentUser();
+      const roleAliases = {
+        institute_admin: "instituteAdmin",
+        policy_officer: "policyOfficer",
+      };
+      const roleType = roleAliases[user.roleType] || user.roleType;
+      const authenticatedUser = { ...user, roleType };
+
+      login(authenticatedUser, tokenResponse.accessToken);
+      navigate(ROLE_HOME[roleType] || "/unauthorized");
+    } catch (loginError) {
+      localStorage.removeItem("kaushalToken");
+      setError(loginError.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -70,29 +116,122 @@ export default function Login() {
           </div>
 
           <span className="eyebrow dark">WELCOME BACK</span>
-          <h2>Sign in to your workspace</h2>
-          <p className="login-muted">Select a role to preview the RBAC interface.</p>
+          <h2>{mode === "login" ? "Sign in to your workspace" : "Create your account"}</h2>
+          <p className="login-muted">
+            {mode === "login"
+              ? "Sign in to your KAUSHAL account."
+              : "Create a KAUSHAL account to get started."}
+          </p>
 
           <form onSubmit={submit}>
+            {mode === "register" && (
+              <>
+                <label>Full name</label>
+                <input
+                  type="text"
+                  autoComplete="name"
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  maxLength={255}
+                  required
+                />
+
+                <label>Role</label>
+                <select
+                  value={role}
+                  onChange={(event) => setRole(event.target.value)}
+                >
+                  {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+
+                {role === "recruiter" && (
+                  <>
+                    <label>Company / organization</label>
+                    <input
+                      type="text"
+                      value={company}
+                      onChange={(event) => setCompany(event.target.value)}
+                      maxLength={255}
+                    />
+                  </>
+                )}
+
+                {role === "candidate" && (
+                  <>
+                    <label>Preferred location</label>
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={(event) => setLocation(event.target.value)}
+                      maxLength={100}
+                    />
+
+                    <label>Skills</label>
+                    <input
+                      type="text"
+                      value={skills}
+                      onChange={(event) => setSkills(event.target.value)}
+                      placeholder="React, JavaScript, Node.js"
+                    />
+                    <small>Separate skills with commas.</small>
+                  </>
+                )}
+              </>
+            )}
+
             <label>Email</label>
-            <input type="email" defaultValue={`${role}@kaushal.demo`} />
+            <input
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
 
             <label>Password</label>
-            <input type="password" defaultValue="demo1234" />
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              minLength={mode === "register" ? 8 : undefined}
+              required
+            />
 
-            <label>Role</label>
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
-              {roles.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-            </select>
+            {error && <p role="alert" className="login-error">{error}</p>}
 
-            <button className="primary-button full" type="submit">
-              Enter workspace <ArrowRight size={18} />
+            <button
+              className="primary-button full"
+              type="submit"
+              disabled={isSubmitting}
+            >
+              {isSubmitting
+                ? mode === "login" ? "Signing in..." : "Creating account..."
+                : mode === "login" ? "Sign in" : "Create account"}
+              <ArrowRight size={18} />
             </button>
           </form>
 
+          <button
+            type="button"
+            className="login-mode-toggle"
+            onClick={() => {
+              setMode((currentMode) =>
+                currentMode === "login" ? "register" : "login"
+              );
+              setError("");
+            }}
+          >
+            {mode === "login"
+              ? "New to KAUSHAL? Create an account"
+              : "Already have an account? Sign in"}
+          </button>
+
           <div className="security-note">
             <ShieldCheck size={17} />
-            <span>RBAC-protected workspace • Demo frontend</span>
+            <span>Role-protected workspace</span>
           </div>
         </div>
       </motion.div>

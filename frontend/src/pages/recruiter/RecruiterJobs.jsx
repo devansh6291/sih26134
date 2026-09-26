@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BriefcaseBusiness,
@@ -9,16 +9,13 @@ import {
   X,
 } from "lucide-react";
 import "./recruiter.css";
-import { useAuth } from "../../context/AuthContext";
 import {
   createJob,
   getRecruiterJobs,
 } from "../../services/api";
 
 export default function RecruiterJobs() {
-  const { currentUser } = useAuth();
   const navigate = useNavigate();
-  const recruiterId = currentUser?.userId || "recruiter-demo";
   const [jobs, setJobs] = useState([]);
   const [showForm, setShowForm] = useState(false);
 
@@ -33,16 +30,17 @@ export default function RecruiterJobs() {
     description: "",
   });
 
-  const loadJobs = () => {
-    setJobs(getRecruiterJobs(recruiterId));
-  };
+  const loadJobs = useCallback(async () => {
+    setJobs(await getRecruiterJobs());
+  }, []);
 
   useEffect(() => {
-    loadJobs();
-
-    window.addEventListener("storage", loadJobs);
-    return () => window.removeEventListener("storage", loadJobs);
-  }, [recruiterId]);
+    loadJobs().catch((error) => alert(error.message));
+    const refreshInterval = window.setInterval(() => {
+      loadJobs().catch((error) => console.error("Failed to refresh jobs:", error));
+    }, 30000);
+    return () => window.clearInterval(refreshInterval);
+  }, [loadJobs]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -53,7 +51,7 @@ export default function RecruiterJobs() {
     }));
   };
 
-  const handleCreateJob = (e) => {
+  const handleCreateJob = async (e) => {
     e.preventDefault();
 
     if (
@@ -68,23 +66,27 @@ export default function RecruiterJobs() {
       return;
     }
 
-    createJob({
-      title: formData.title,
-      company: formData.company,
-      location: formData.location,
-      type: formData.type,
-      experience: formData.experience,
-      salary: formData.salary,
-      skills: formData.skills
-        .split(",")
-        .map((skill) => skill.trim())
-        .filter(Boolean),
-      description:
-        formData.description ||
-        "No job description provided.",
-      recruiterId,
-    });
-    loadJobs();
+    try {
+      await createJob({
+        title: formData.title,
+        company: formData.company,
+        location: formData.location,
+        type: formData.type,
+        experience: formData.experience,
+        salary: formData.salary,
+        skills: formData.skills
+          .split(",")
+          .map((skill) => skill.trim())
+          .filter(Boolean),
+        description:
+          formData.description ||
+          "No job description provided.",
+      });
+      await loadJobs();
+    } catch (error) {
+      alert(error.message);
+      return;
+    }
 
     setShowForm(false);
 

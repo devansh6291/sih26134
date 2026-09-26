@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Search,
   MapPin,
@@ -14,32 +14,28 @@ import {
   getRecruiterApplications,
   updateApplicationStatus,
 } from "../../services/api";
-import { useAuth } from "../../context/AuthContext";
 import "./recruiter.css";
 
 export default function RecruiterApplicants() {
-  const { currentUser } = useAuth();
   const [candidates, setCandidates] = useState([]);
   const [showCV, setShowCV] = useState(false);
   const [selectedCandidate, setSelectedCandidate] =
     useState(null);
   const [search, setSearch] = useState("");
 
-  const recruiterId = currentUser?.userId || "recruiter-demo";
+  const loadApplications = useCallback(async () => {
+    setCandidates(await getRecruiterApplications());
+  }, []);
 
   useEffect(() => {
-    loadApplications();
-    window.addEventListener("storage", loadApplications);
-    return () =>
-      window.removeEventListener("storage", loadApplications);
-  }, [recruiterId]);
-
-  const loadApplications = () => {
-    const applications =
-      getRecruiterApplications(recruiterId);
-
-    setCandidates(applications);
-  };
+    loadApplications().catch((error) => alert(error.message));
+    const refreshInterval = window.setInterval(() => {
+      loadApplications().catch((error) =>
+        console.error("Failed to refresh applications:", error)
+      );
+    }, 15000);
+    return () => window.clearInterval(refreshInterval);
+  }, [loadApplications]);
 
   const filteredCandidates = useMemo(() => {
     const query = search.toLowerCase().trim();
@@ -66,30 +62,27 @@ export default function RecruiterApplicants() {
     });
   }, [candidates, search]);
 
-  const updateStatus = (candidateId, status) => {
-    const updatedCandidate =
-      updateApplicationStatus(
-        candidateId,
+  const updateStatus = async (applicationId, status) => {
+    try {
+      const updatedApplication = await updateApplicationStatus(
+        applicationId,
         status
       );
-
-    if (!updatedCandidate) {
-      return;
+      setCandidates((prev) =>
+        prev.map((candidate) =>
+          candidate.id === applicationId
+            ? updatedApplication
+            : candidate
+        )
+      );
+      setSelectedCandidate((prev) =>
+        prev && prev.id === applicationId
+          ? updatedApplication
+          : prev
+      );
+    } catch (error) {
+      alert(error.message);
     }
-
-    setCandidates((prev) =>
-      prev.map((candidate) =>
-        candidate.id === candidateId
-          ? updatedCandidate
-          : candidate
-      )
-    );
-
-    setSelectedCandidate((prev) =>
-      prev && prev.id === candidateId
-        ? updatedCandidate
-        : prev
-    );
   };
 
   const openCV = (candidate) => {

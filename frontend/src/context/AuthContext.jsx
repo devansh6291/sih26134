@@ -6,6 +6,10 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
+      if (!localStorage.getItem("kaushalToken")) {
+        localStorage.removeItem("kaushalUser");
+        return null;
+      }
       const saved = localStorage.getItem("kaushalUser");
       return saved ? JSON.parse(saved) : null;
     } catch (error) {
@@ -15,12 +19,14 @@ export function AuthProvider({ children }) {
     }
   });
 
-  const login = (user) => {
+  const login = (user, token) => {
+    localStorage.setItem("kaushalToken", token);
     localStorage.setItem("kaushalUser", JSON.stringify(user));
     setCurrentUser(user);
   };
 
   const logout = () => {
+    localStorage.removeItem("kaushalToken");
     localStorage.removeItem("kaushalUser");
     setCurrentUser(null);
   };

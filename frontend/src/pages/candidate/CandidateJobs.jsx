@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import JobFilters from "../../components/jobs/JobFilters";
 import JobList from "../../components/jobs/JobList";
 import {
@@ -7,11 +7,9 @@ import {
   getCandidateApplications,
   getJobs,
 } from "../../services/api";
-import { useAuth } from "../../context/AuthContext";
 import "./candidate.css";
 
 export default function CandidateJobs() {
-  const { currentUser } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [applications, setApplications] = useState([]);
   const [search, setSearch] = useState("");
@@ -19,30 +17,23 @@ export default function CandidateJobs() {
   const [type, setType] = useState("All");
   const [sort, setSort] = useState("latest");
 
-  const candidate = {
-    id: currentUser?.userId || "candidate-demo",
-    name: currentUser?.fullName || "Candidate",
-    email: currentUser?.email || "",
-    skills: currentUser?.skills || ["React", "JavaScript", "Node.js"],
-    location: currentUser?.location || "Bangalore",
-  };
+  const loadJobs = useCallback(async () => {
+    const [availableJobs, candidateApplications] = await Promise.all([
+      getJobs(),
+      getCandidateApplications(),
+    ]);
 
-  const loadJobs = () => {
-    const availableJobs = getJobs();
-
-    setJobs(
-      availableJobs.filter(
-        (job) => job.status === "Active"
-      )
-    );
-    setApplications(getCandidateApplications(candidate.id));
-  };
+    setJobs(availableJobs);
+    setApplications(candidateApplications);
+  }, []);
 
   useEffect(() => {
-    loadJobs();
-    window.addEventListener("storage", loadJobs);
-    return () => window.removeEventListener("storage", loadJobs);
-  }, [candidate.id]);
+    loadJobs().catch((error) => alert(error.message));
+    const refreshInterval = window.setInterval(() => {
+      loadJobs().catch((error) => console.error("Failed to refresh applications:", error));
+    }, 15000);
+    return () => window.clearInterval(refreshInterval);
+  }, [loadJobs]);
 
   const filteredJobs = useMemo(() => {
     let result = [...jobs];
@@ -106,11 +97,9 @@ ${job.description}`
     );
   };
 
-  const handleApply = (job) => {
+  const handleApply = async (job) => {
     const alreadyApplied = applications.some(
-      (application) =>
-        Number(application.jobId) === Number(job.id) &&
-        application.candidateId === candidate.id
+      (application) => Number(application.jobId) === Number(job.id)
     );
 
     if (alreadyApplied) {
@@ -120,40 +109,13 @@ ${job.description}`
       return;
     }
 
-    const result = applyForJob({
-      jobId: job.id,
-
-      recruiterId: job.recruiterId,
-
-      candidateId: candidate.id,
-      candidateName: candidate.name,
-      candidateEmail: candidate.email,
-
-      candidateRole: job.title,
-
-      skills: candidate.skills,
-
-      location: candidate.location,
-
-      readiness: 78,
-    });
-
-    if (!result.success) {
-      alert(result.message);
-      return;
+    try {
+      await applyForJob(job.id);
+      await loadJobs();
+      alert(`Application submitted successfully!\n\n${job.title}\n${job.company}`);
+    } catch (error) {
+      alert(error.message);
     }
-
-    /*
-      Reload jobs so applicant count changes immediately.
-    */
-    loadJobs();
-
-    alert(
-      `Application submitted successfully!
-
-${job.title}
-${job.company}`
-    );
   };
 
   return (

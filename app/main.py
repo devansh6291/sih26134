@@ -1,11 +1,21 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.core.database import Base, engine
-from app.routers import auth, communities, intelligence, certification, gaps, reports
+from app.core.database import Base, engine, migrate_sqlite_schema
+from app.routers import (
+    auth,
+    communities,
+    intelligence,
+    certification,
+    gaps,
+    reports,
+    jobs,
+    platform,
+)
 
 # Automatically create all SQL tables on boot
 Base.metadata.create_all(bind=engine)
+migrate_sqlite_schema()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -29,6 +39,8 @@ app.include_router(intelligence.router, prefix=settings.API_V1_STR)
 app.include_router(certification.router, prefix=settings.API_V1_STR)
 app.include_router(gaps.router, prefix=settings.API_V1_STR)
 app.include_router(reports.router, prefix=settings.API_V1_STR)
+app.include_router(jobs.router, prefix=settings.API_V1_STR)
+app.include_router(platform.router, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def health_check():

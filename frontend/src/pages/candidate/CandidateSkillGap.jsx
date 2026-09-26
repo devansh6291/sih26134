@@ -1,427 +1,106 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  Target,
-  CheckCircle2,
   AlertTriangle,
   BookOpen,
+  CheckCircle2,
+  Target,
   TrendingUp,
-  BriefcaseBusiness,
 } from "lucide-react";
+import { getCandidateGuidance } from "../../services/api";
 import "./candidate.css";
-const ROLE_DATA = {
-  "Full Stack Developer": {
-    readiness: 72,
-
-    currentSkills: [
-      "HTML",
-      "CSS",
-      "JavaScript",
-      "React",
-      "Node.js",
-      "MongoDB",
-    ],
-
-    requiredSkills: [
-      "HTML",
-      "CSS",
-      "JavaScript",
-      "React",
-      "Node.js",
-      "MongoDB",
-      "Express.js",
-      "PostgreSQL",
-      "TypeScript",
-      "Docker",
-    ],
-
-    recommendations: [
-      {
-        title: "Express.js & REST API Development",
-        type: "Backend",
-        duration: "4 weeks",
-        level: "Intermediate",
-      },
-      {
-        title: "PostgreSQL for Developers",
-        type: "Database",
-        duration: "3 weeks",
-        level: "Intermediate",
-      },
-      {
-        title: "TypeScript Fundamentals",
-        type: "Frontend",
-        duration: "2 weeks",
-        level: "Beginner",
-      },
-      {
-        title: "Docker Essentials",
-        type: "DevOps",
-        duration: "2 weeks",
-        level: "Beginner",
-      },
-    ],
-  },
-
-  "React Developer": {
-    readiness: 78,
-
-    currentSkills: [
-      "HTML",
-      "CSS",
-      "JavaScript",
-      "React",
-      "Git",
-    ],
-
-    requiredSkills: [
-      "HTML",
-      "CSS",
-      "JavaScript",
-      "React",
-      "Git",
-      "TypeScript",
-      "Redux",
-      "React Testing",
-      "REST APIs",
-    ],
-
-    recommendations: [
-      {
-        title: "TypeScript with React",
-        type: "Frontend",
-        duration: "3 weeks",
-        level: "Intermediate",
-      },
-      {
-        title: "Redux & State Management",
-        type: "Frontend",
-        duration: "2 weeks",
-        level: "Intermediate",
-      },
-      {
-        title: "React Testing",
-        type: "Testing",
-        duration: "2 weeks",
-        level: "Intermediate",
-      },
-    ],
-  },
-
-  "Data Analyst": {
-    readiness: 64,
-
-    currentSkills: [
-      "Python",
-      "SQL",
-      "Excel",
-      "Statistics",
-    ],
-
-    requiredSkills: [
-      "Python",
-      "SQL",
-      "Excel",
-      "Statistics",
-      "Power BI",
-      "Pandas",
-      "Data Visualization",
-      "Machine Learning Basics",
-    ],
-
-    recommendations: [
-      {
-        title: "Power BI for Data Analytics",
-        type: "Analytics",
-        duration: "3 weeks",
-        level: "Beginner",
-      },
-      {
-        title: "Python Pandas",
-        type: "Python",
-        duration: "2 weeks",
-        level: "Intermediate",
-      },
-      {
-        title: "Data Visualization",
-        type: "Analytics",
-        duration: "2 weeks",
-        level: "Intermediate",
-      },
-    ],
-  },
-};
 
 export default function CandidateSkillGap() {
-  const [selectedRole, setSelectedRole] =
-    useState("Full Stack Developer");
+  const [guidance, setGuidance] = useState(null);
+  const [error, setError] = useState("");
 
-  const roleData = ROLE_DATA[selectedRole];
+  const loadGuidance = useCallback(async () => {
+    setError("");
+    try {
+      setGuidance(await getCandidateGuidance());
+    } catch (loadError) {
+      setError(loadError.message);
+    }
+  }, []);
 
-  const missingSkills = useMemo(() => {
-    return roleData.requiredSkills.filter(
-      (skill) => !roleData.currentSkills.includes(skill)
-    );
-  }, [roleData]);
-
-  const matchedSkills = useMemo(() => {
-    return roleData.requiredSkills.filter(
-      (skill) => roleData.currentSkills.includes(skill)
-    );
-  }, [roleData]);
-
-  const gapPercentage = Math.round(
-    (missingSkills.length /
-      roleData.requiredSkills.length) *
-      100
-  );
+  useEffect(() => {
+    loadGuidance();
+  }, [loadGuidance]);
 
   return (
     <div className="page-container">
-
-      {/* HEADER */}
       <div className="page-header">
         <div>
-          <div className="eyebrow dark">
-            PERSONALIZED SKILL INTELLIGENCE
-          </div>
-
+          <div className="eyebrow dark">PERSONALIZED SKILL INTELLIGENCE</div>
           <h1>My Skill Gap</h1>
-
           <p>
-            Understand your current skills, identify missing
-            skills, and follow a personalized learning path.
+            Compare your saved skills with role and location demand recorded
+            from employer and labour-market evidence.
           </p>
         </div>
-
         <div className="date-pill">
-          {roleData.readiness}% Ready
+          <Target size={16} /> {guidance?.location || "Location not set"}
         </div>
       </div>
 
-      {/* TARGET ROLE */}
-      <div className="skill-gap-toolbar">
-        <div>
-          <label>Target Career Role</label>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {!guidance && !error && <p role="status">Loading your evidence-based guidance...</p>}
 
-          <div className="skill-role-selector">
-            <Target size={18} />
-
-            <select
-              value={selectedRole}
-              onChange={(event) =>
-                setSelectedRole(event.target.value)
-              }
-            >
-              {Object.keys(ROLE_DATA).map((role) => (
-                <option key={role} value={role}>
-                  {role}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* OVERVIEW */}
-      <div className="skill-overview-grid">
-
-        <div className="skill-overview-card">
-          <div className="skill-card-icon">
-            <TrendingUp size={21} />
-          </div>
-
-          <span>Skill Readiness</span>
-
-          <strong>{roleData.readiness}%</strong>
-
-          <div className="skill-progress">
-            <div
-              style={{
-                width: `${roleData.readiness}%`,
-              }}
-            />
-          </div>
-
-          <p>
-            Your current profile matches the requirements
-            for this role.
-          </p>
-        </div>
-
-        <div className="skill-overview-card">
-          <div className="skill-card-icon">
-            <CheckCircle2 size={21} />
-          </div>
-
-          <span>Matched Skills</span>
-
-          <strong>{matchedSkills.length}</strong>
-
-          <p>
-            Skills already present in your profile.
-          </p>
-        </div>
-
-        <div className="skill-overview-card">
-          <div className="skill-card-icon warning-icon">
-            <AlertTriangle size={21} />
-          </div>
-
-          <span>Skill Gaps</span>
-
-          <strong>{missingSkills.length}</strong>
-
-          <p>
-            Skills recommended for your target role.
-          </p>
-        </div>
-
-        <div className="skill-overview-card">
-          <div className="skill-card-icon">
-            <BriefcaseBusiness size={21} />
-          </div>
-
-          <span>Role Alignment</span>
-
-          <strong>{100 - gapPercentage}%</strong>
-
-          <p>
-            Alignment based on current skill coverage.
-          </p>
-        </div>
-
-      </div>
-
-      {/* SKILL LISTS */}
-      <div className="skill-columns">
-
-        {/* CURRENT SKILLS */}
-        <section className="skill-panel">
-
-          <div className="skill-panel-header">
-            <div>
-              <h2>Current Skills</h2>
-
-              <p>
-                Skills currently present in your profile.
-              </p>
+      {guidance && (
+        <>
+          <div className="skill-overview-grid">
+            <div className="skill-overview-card">
+              <div className="skill-card-icon"><TrendingUp size={21} /></div>
+              <span>Skills in your profile</span>
+              <strong>{guidance.currentSkills.length}</strong>
+              <p>From your saved candidate profile.</p>
             </div>
-
-            <span className="mini-badge success">
-              {matchedSkills.length} matched
-            </span>
-          </div>
-
-          <div className="skill-tag-list">
-            {roleData.currentSkills.map((skill) => (
-              <span
-                key={skill}
-                className="skill-tag matched"
-              >
-                <CheckCircle2 size={14} />
-
-                {skill}
-              </span>
-            ))}
-          </div>
-
-        </section>
-
-        {/* SKILL GAPS */}
-        <section className="skill-panel">
-
-          <div className="skill-panel-header">
-            <div>
-              <h2>Skill Gaps</h2>
-
-              <p>
-                Skills you can develop for this role.
-              </p>
+            <div className="skill-overview-card">
+              <div className="skill-card-icon"><AlertTriangle size={21} /></div>
+              <span>Priority opportunities</span>
+              <strong>{guidance.prioritySkillGaps.length}</strong>
+              <p>Demanded skills not currently in your profile.</p>
             </div>
-
-            <span className="mini-badge warning">
-              {missingSkills.length} to learn
-            </span>
-          </div>
-
-          <div className="skill-tag-list">
-            {missingSkills.map((skill) => (
-              <span
-                key={skill}
-                className="skill-tag missing"
-              >
-                <AlertTriangle size={14} />
-
-                {skill}
-              </span>
-            ))}
-          </div>
-
-        </section>
-
-      </div>
-
-      {/* RECOMMENDATIONS */}
-      <section className="recommendation-section">
-
-        <div className="section-heading">
-          <div>
-            <div className="eyebrow dark">
-              PERSONALIZED LEARNING
+            <div className="skill-overview-card">
+              <div className="skill-card-icon"><BookOpen size={21} /></div>
+              <span>Matching courses</span>
+              <strong>{guidance.recommendedCourses.length}</strong>
+              <p>Active courses covering one or more priority skills.</p>
             </div>
-
-            <h2>Recommended Learning</h2>
-
-            <p>
-              Courses selected to help close your current
-              skill gaps.
-            </p>
           </div>
 
-          <BookOpen size={25} />
-        </div>
-
-        <div className="recommendation-grid">
-
-          {roleData.recommendations.map((course) => (
-            <article
-              className="recommendation-card"
-              key={course.title}
-            >
-              <div className="recommendation-icon">
-                <BookOpen size={20} />
+          <section className="chart-card module-form-card">
+            <div className="card-heading"><div><h3>Skills already in your profile</h3><p>Keep your registered profile up to date for more relevant recommendations.</p></div></div>
+            {guidance.currentSkills.length ? (
+              <div className="candidate-skills">
+                {guidance.currentSkills.map((skill) => <span key={skill}>{skill}</span>)}
               </div>
+            ) : (
+              <p>No skills are recorded in your profile yet. Add skills when creating/updating your candidate account.</p>
+            )}
+          </section>
 
-              <div className="recommendation-content">
+          <section className="chart-card module-form-card">
+            <div className="card-heading"><div><h3>Priority skills to develop</h3><p>Based on current demand signals for your saved location.</p></div></div>
+            {guidance.prioritySkillGaps.length ? guidance.prioritySkillGaps.map((skill) => (
+              <div className="list-row" key={skill}>
+                <span>{skill}</span><span className="badge warning">Demand evidence</span>
+              </div>
+            )) : <p>No skill gaps found in the signals currently available for your location.</p>}
+          </section>
 
-                <span className="course-type">
-                  {course.type}
-                </span>
-
-                <h3>{course.title}</h3>
-
-                <div className="course-meta">
-                  <span>
-                    {course.duration}
-                  </span>
-
-                  <span>
-                    {course.level}
-                  </span>
+          <section className="chart-card module-form-card">
+            <div className="card-heading"><div><h3>Course recommendations</h3><p>Recommendations connect recorded course curricula to the priority skills above.</p></div></div>
+            {guidance.recommendedCourses.length ? guidance.recommendedCourses.map((course) => (
+              <article className="data-row" key={course.courseId}>
+                <div className="data-main">
+                  <div className="row-icon"><CheckCircle2 size={18} /></div>
+                  <div><strong>{course.courseName}</strong><small>Target role: {course.targetRole}</small><small>Priority skills: {course.matchingSkills.join(", ")}</small></div>
                 </div>
-
-                <button className="secondary-button">
-                  View Course
-                </button>
-
-              </div>
-            </article>
-          ))}
-
-        </div>
-
-      </section>
-
+              </article>
+            )) : <p>No active course currently covers your recorded priority skill gaps.</p>}
+          </section>
+        </>
+      )}
     </div>
   );
 }

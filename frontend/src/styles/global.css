@@ -129,6 +129,9 @@ th { color:var(--muted); font-weight:700; background:#FAFBFC; }
 .login-card label { display:block; font-size:12px; font-weight:800; margin:15px 0 7px; }
 .login-card input, .login-card select { width:100%; padding:12px 13px; border:1px solid var(--border); border-radius:10px; outline:0; background:#FBFDFF; }
 .login-card input:focus, .login-card select:focus { border-color:var(--primary-light); box-shadow:0 0 0 3px rgba(37,99,235,.1); }
+.login-error { color:#b91c1c; font-size:13px; margin:12px 0 0; }
+.login-mode-toggle { display:block; width:100%; margin-top:16px; padding:8px; border:0; background:transparent; color:var(--primary); font:inherit; font-size:13px; font-weight:700; cursor:pointer; }
+.login-card .primary-button:disabled { opacity:.65; cursor:wait; }
 .security-note { margin-top:20px; padding:10px; border-radius:9px; background:#F0FDF4; color:#166534; display:flex; gap:8px; align-items:center; font-size:11px; }
 .mobile-brand { display:none; }
 
